@@ -6,10 +6,7 @@ import cash.just.sdk.Cash.BtcNetwork.MAIN_NET
 import cash.just.sdk.model.*
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
-import retrofit2.Call
-import retrofit2.Callback
-import retrofit2.Response
-import retrofit2.Retrofit
+import retrofit2.*
 import retrofit2.converter.moshi.MoshiConverterFactory
 import timber.log.Timber
 
@@ -17,6 +14,7 @@ class CashImpl:Cash {
     private lateinit var sessionKey:String
     private lateinit var retrofit: WacAPI
     private lateinit var network:BtcNetwork
+    private var userState: UserState = UserState.NOT_VALID
 
     override fun createGuestSession(network: BtcNetwork, listener: Cash.SessionCallback) {
         initIfNeeded(network)
@@ -30,6 +28,7 @@ class CashImpl:Cash {
                 if (response.isSuccessful) {
                     sessionKey = response.body()!!.data.sessionKey
                     listener.onSessionCreated(sessionKey)
+                    userState = UserState.GUEST
                 } else {
                     var message = response.code().toString()
                     if (response.code() == 502) {
@@ -99,6 +98,7 @@ class CashImpl:Cash {
             override fun onResponse(call: Call<WacBaseResponse>, response: Response<WacBaseResponse>) {
                 if (response.isSuccessful) {
                     if (response.body()?.result?.toLowerCase() == "ok") {
+                        userState = UserState.LOGGED_IN
                         listener.onSucceed()
                     } else {
                         listener.onError("error")
@@ -162,7 +162,42 @@ class CashImpl:Cash {
         return retrofit.sendVerificationCode(sessionKey, firstName, lastName, phoneNumber, email, "1")
     }
 
-    override  fun getKycStatus(): Call<KycStatusResponse> {
-        return retrofit.getKycStatus(sessionKey)
+    override fun getSession() : String? {
+        return sessionKey
+    }
+
+    override suspend fun getKycStatus(): Response<KycStatusResponse> {
+        val result = retrofit.getKycStatus(sessionKey).awaitResponse()
+        if(result.isSuccessful) {
+            userState = when (result.body()?.data?.items!![0].status) {
+                KycStatus.NEW -> {
+                    UserState.KYC_NOT_VERIFIED
+                }
+                KycStatus.DOCS_VERIFIED -> {
+                    UserState.KYC_VERIFIED
+                }
+                KycStatus.REJECTED -> {
+                    UserState.NOT_VALID
+                }
+            }
+
+        }
+        return result
+    }
+
+    override fun getUserState(): UserState {
+        return userState
+    }
+
+    override fun getKycDocTypes (): Call<KycDocTypeResponse> {
+        return retrofit.getKycDocTypes(sessionKey)
+    }
+
+    override fun getKycPersonalInformation(): Call<KycPiResponse> {
+        return retrofit.getKycPersonalInformation(sessionKey)
+    }
+
+    override fun getKycDocuments(): Call<KycDocumentResponse> {
+        return retrofit.getKycDocuments(sessionKey)
     }
 }
